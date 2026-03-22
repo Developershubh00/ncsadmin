@@ -1,10 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import { Download, Search, RefreshCw } from 'lucide-react';
 import * as callService from '../services/callService';
-import type { CallReportRecord } from '../services/callService';
+import type { CallReportRecord, CallReportStatistics } from '../services/callService';
 
 const PatientReports: React.FC = () => {
   const [reportData, setReportData] = useState<CallReportRecord[]>([]);
+  const [statistics, setStatistics] = useState<CallReportStatistics | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   
@@ -74,14 +75,16 @@ const PatientReports: React.FC = () => {
         ...dateFilters,
       };
       
-      const data = await callService.getCallReport(filters);
-      setReportData(data);
+      const { statistics: stats, calls } = await callService.getCallReport(filters);
+      setReportData(calls);
+      setStatistics(stats ?? null);
       setError('');
-      console.log('✅ Reports fetched:', data.length, 'records');
+      console.log('✅ Reports fetched:', calls.length, 'records', '| stats:', stats);
     } catch (err) {
       console.error('❌ API error:', err);
       setError('Unable to load reports. Please ensure the API is accessible.');
       setReportData([]);
+      setStatistics(null);
     } finally {
       setLoading(false);
     }
@@ -128,10 +131,21 @@ const PatientReports: React.FC = () => {
       report.attend_delay_seconds || '-'
     ]);
 
+    // Include statistics in export
+    const statsRows = statistics
+      ? [
+          '',
+          'STATISTICS',
+          `"Mean Total Time","${formatResponseTime(statistics.mean_total_time_seconds)}"`,
+          `"Median Total Time","${formatResponseTime(statistics.median_total_time_seconds)}"`
+        ]
+      : [];
+
     // Combine headers and rows
     const csvContent = [
       headers.join(','),
-      ...rows.map(row => row.map(cell => `"${cell}"`).join(','))
+      ...rows.map(row => row.map(cell => `"${cell}"`).join(',')),
+      ...statsRows,
     ].join('\n');
 
     // Create blob and download
@@ -334,7 +348,40 @@ const PatientReports: React.FC = () => {
           <span className="ml-3 text-gray-600">Loading reports...</span>
         </div>
       ) : (
-        <div className="bg-white rounded-lg shadow-sm border border-gray-100">
+        <>
+          {/* Statistics summary cards */}
+          {statistics && (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-6">
+              <div className="bg-white rounded-lg shadow-sm border border-gray-100 p-4 flex items-center gap-4">
+                <div className="flex-shrink-0 bg-blue-50 rounded-full p-3">
+                  <svg className="w-6 h-6 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                </div>
+                <div>
+                  <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">Mean Total Time</p>
+                  <p className="text-2xl font-bold text-gray-900 mt-0.5">
+                    {formatResponseTime(statistics.mean_total_time_seconds)}
+                  </p>
+                </div>
+              </div>
+              <div className="bg-white rounded-lg shadow-sm border border-gray-100 p-4 flex items-center gap-4">
+                <div className="flex-shrink-0 bg-purple-50 rounded-full p-3">
+                  <svg className="w-6 h-6 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+                  </svg>
+                </div>
+                <div>
+                  <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">Median Total Time</p>
+                  <p className="text-2xl font-bold text-gray-900 mt-0.5">
+                    {formatResponseTime(statistics.median_total_time_seconds)}
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
+
+          <div className="bg-white rounded-lg shadow-sm border border-gray-100">
           <div className="overflow-x-auto">
             <table className="min-w-full divide-y divide-gray-200">
               <thead className="bg-gray-50">
@@ -408,7 +455,16 @@ const PatientReports: React.FC = () => {
               </div>
             )}
           </div>
+          {/* Statistics footer row */}
+          {statistics && reportData.length > 0 && (
+            <div className="flex flex-wrap items-center gap-6 px-6 py-3 bg-gray-50 border-t border-gray-100 text-sm text-gray-600 rounded-b-lg">
+              <span>Total records: <strong>{reportData.length}</strong></span>
+              <span>Mean total time: <strong>{formatResponseTime(statistics.mean_total_time_seconds)}</strong></span>
+              <span>Median total time: <strong>{formatResponseTime(statistics.median_total_time_seconds)}</strong></span>
+            </div>
+          )}
         </div>
+        </>
       )}
     </div>
   );

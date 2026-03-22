@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import CallTable from '../components/CallTable';
 import * as callService from '../services/callService';
-import websocketService from '../services/websocketService';
-import type { CallRecord } from '../types/types';
+import type { CallRecord, WSEvent } from '../types/types';
+import { useNurseCallRealtime } from '../hooks/useNurseCallRealtime';
+import ConnectionStatusBadge from '../components/ConnectionStatusBadge';
 
 interface CallForTable {
   id: string | number;
@@ -17,6 +18,9 @@ const CentralCallMonitoring: React.FC = () => {
   const [calls, setCalls] = useState<CallForTable[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+
+  // ── Real-time hook ─────────────────────────────────────────────────────────
+  const { connectionStatus, onEvent } = useNurseCallRealtime();
   
   // Filter state
   const [filterCallFrom, setFilterCallFrom] = useState<string>('');
@@ -82,23 +86,66 @@ const CentralCallMonitoring: React.FC = () => {
     }
   };
 
+  // ── Live in-place updates from WS / webhook events ───────────────────────────
+  useEffect(() => {
+    const unsubscribe = onEvent((payload) => {
+      const e = payload as WSEvent;
+
+      if (e.event === 'call_created') {
+        setRawCalls((prev) => {
+          // Don’t duplicate
+          if (prev.some((c) => c.id === e.call_id)) return prev;
+          const newRecord: CallRecord = {
+            id: e.call_id,
+            room_no: e.room_no ?? '',
+            floor_no: e.floor_no ?? 0,
+            hospital_name: (e as { hospital_name?: string }).hospital_name ?? (e as { hospital?: string }).hospital ?? '',
+            call_from: e.call_from,
+            status: 'new',
+            created_at: e.created_at,
+            acknowledged_at: null,
+            attended_at: null,
+          };
+          return [newRecord, ...prev];
+        });
+      } else if (e.event === 'call_acknowledged') {
+        setRawCalls((prev) =>
+          prev.map((c) =>
+            c.id === e.call_id
+              ? { ...c, status: 'acknowledged' as const, acknowledged_at: e.acknowledged_at }
+              : c
+          )
+        );
+      } else if (e.event === 'call_attended') {
+        setRawCalls((prev) =>
+          prev.map((c) =>
+            c.id === e.call_id
+              ? { ...c, status: 'attended' as const, attended_at: e.attended_at }
+              : c
+          )
+        );
+      } else if (e.event === 'call_unacknowledged') {
+        setRawCalls((prev) =>
+          prev.map((c) =>
+            c.id === e.call_id
+              ? { ...c, status: 'new' as const, acknowledged_at: null }
+              : c
+          )
+        );
+      }
+    });
+    return unsubscribe;
+  }, [onEvent]);
+
+  // ── Initial REST fetch + re-fetch when filters change ─────────────────────────
   useEffect(() => {
     fetchCalls();
-    
-    // Subscribe to WebSocket for real-time updates
-    websocketService.connect();
-    const unsubscribe = websocketService.subscribe(() => {
-      fetchCalls();
-    });
-    
-    // Refresh every 30 seconds
-    const interval = setInterval(fetchCalls, 30000);
-    
-    return () => {
-      clearInterval(interval);
-      unsubscribe();
-    };
   }, [filterFloor, filterRoom, filterCallFrom]);
+
+  // ── Keep table rows in sync when rawCalls changes via live events ─────────────
+  useEffect(() => {
+    setCalls(transformCallsForTable(rawCalls));
+  }, [rawCalls]);
 
   // Apply client-side filter for call_from
   const getFilteredCalls = (): CallForTable[] => {
@@ -127,9 +174,12 @@ const CentralCallMonitoring: React.FC = () => {
 
   return (
     <div>
-      <div className="mb-6">
-        <h1 className="text-2xl font-bold text-gray-800">Central Call Monitoring</h1>
-        <p className="text-gray-600">View and manage active calls in the system</p>
+      <div className="mb-6 flex items-start justify-between">
+        <div>
+          <h1 className="text-2xl font-bold text-gray-800">Central Call Monitoring</h1>
+          <p className="text-gray-600">View and manage active calls in the system</p>
+        </div>
+        <ConnectionStatusBadge status={connectionStatus} className="mt-1" />
       </div>
 
       {error && (

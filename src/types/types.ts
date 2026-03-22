@@ -69,8 +69,10 @@ export interface CallCreateRequest {
  */
 export interface CallRecord {
   id: number;
+  bed_no?: string;
   room_no: string;
   floor_no: number;
+  corridoor_no?: string | number;
   hospital_name: string;
   status: 'new' | 'acknowledged' | 'attended';
   created_at: string;
@@ -98,28 +100,110 @@ export interface CallAttendResponse {
 export interface WSCallCreatedEvent {
   event: 'call_created';
   call_id: number;
+  bed_no?: string;
   room_no: string;
   floor_no: number;
-  hospital_name: string;
+  corridoor_no?: string | number;
+  hospital?: string | null;
+  hospital_name?: string;
   call_from: string;
   created_at: string;
+  message?: string;
 }
 
 export interface WSCallAcknowledgedEvent {
   event: 'call_acknowledged';
   call_id: number;
+  room_no?: string;
+  bed_no?: string;
   acknowledged_at: string;
-  response_time_seconds: number;
+  response_time_seconds?: number;
+  message?: string;
 }
 
 export interface WSCallAttendedEvent {
   event: 'call_attended';
   call_id: number;
+  room_no?: string;
+  bed_no?: string;
   attended_at: string;
-  attend_delay_seconds: number;
+  attend_delay_seconds?: number;
+  message?: string;
 }
 
-export type WSEvent = WSCallCreatedEvent | WSCallAcknowledgedEvent | WSCallAttendedEvent;
+export interface WSCallUnacknowledgedEvent {
+  event: 'call_unacknowledged';
+  call_id: number;
+  room_no?: string;
+  call_from?: string;
+  created_at?: string;
+  message?: string;
+}
+
+/** Fired by some backends as a standalone code-blue push */
+export interface WSCodeBlueEvent {
+  event: 'code_blue';
+  call_id: number;
+  room_no: string;
+  bed_no?: string;
+  floor_no: number;
+  corridoor_no?: string | number;
+  hospital?: string | null;
+  hospital_name?: string;
+  call_from?: string;
+  created_at: string;
+  message?: string;
+  auto_attended_calls?: unknown[];
+}
+
+export type WSEvent =
+  | WSCallCreatedEvent
+  | WSCallAcknowledgedEvent
+  | WSCallAttendedEvent
+  | WSCallUnacknowledgedEvent
+  | WSCodeBlueEvent;
+
+// ===== Webhook Payload Types =====
+/** POST fired when a bed/staff/code-blue call is created */
+export interface WebhookCallCreatedPayload {
+  call_id: number;
+  bed_no?: string;
+  room_no: string;
+  floor_no: number;
+  corridoor_no?: string | number;
+  hospital_name?: string;
+  call_from: string;
+  created_at: string;
+  status: 'new';
+  /** Only present for code-blue calls */
+  auto_attended_calls?: unknown[];
+}
+
+/** POST fired when a call is acknowledged */
+export interface WebhookCallAcknowledgedPayload {
+  event: 'call_acknowledged';
+  call_id: number;
+  bed_no?: string;
+  room_no: string;
+  acknowledged_at: string;
+}
+
+/** POST fired when a call is attended */
+export interface WebhookCallAttendedPayload {
+  event: 'call_attended';
+  call_id: number;
+  bed_no?: string;
+  room_no: string;
+  attended_at: string;
+}
+
+export type AnyWebhookPayload =
+  | WebhookCallCreatedPayload
+  | WebhookCallAcknowledgedPayload
+  | WebhookCallAttendedPayload;
+
+// ===== Real-time connection status =====
+export type ConnectionStatus = 'connecting' | 'connected' | 'reconnecting' | 'disconnected';
 
 // ===== Hospital Types =====
 export interface HospitalValidity {
@@ -134,11 +218,4 @@ export interface HospitalValidity {
   };
 }
 
-// ===== Webhook Payload =====
-export interface WebhookCallUnacknowledged {
-  event: 'call_unacknowledged';
-  call_id: number;
-  room_no: string;
-  call_from: string;
-  created_at: string;
-}
+

@@ -19,22 +19,30 @@ export async function createCall(data: CallCreateRequest): Promise<CallRecord> {
 
 /**
  * Acknowledge a call
- * POST /api/call/<id>/ack/
+ * POST /api/call/acknowledge/<bed_no>/
  */
-export async function acknowledgeCall(callId: number): Promise<CallAckResponse> {
-    return apiRequest<CallAckResponse>(`/api/call/${callId}/ack/`, {
+export async function acknowledgeCall(bedNo: string): Promise<CallAckResponse> {
+    return apiRequest<CallAckResponse>(`/api/call/acknowledge/${bedNo}/`, {
         method: 'POST',
     });
 }
 
 /**
  * Attend a call (nurse arrived)
- * POST /api/call/<id>/attend/
+ * POST /api/call/attend/<bed_no>/
  */
-export async function attendCall(callId: number): Promise<CallAttendResponse> {
-    return apiRequest<CallAttendResponse>(`/api/call/${callId}/attend/`, {
+export async function attendCall(bedNo: string): Promise<CallAttendResponse> {
+    return apiRequest<CallAttendResponse>(`/api/call/attend/${bedNo}/`, {
         method: 'POST',
     });
+}
+
+/**
+ * Get a single call event by ID
+ * GET /api/calls/events/<id>/
+ */
+export async function getCallEvent(callId: number): Promise<CallRecord> {
+    return apiRequest<CallRecord>(`/api/calls/events/${callId}/`);
 }
 
 /**
@@ -68,10 +76,26 @@ export async function listCallEvents(filters?: {
 /**
  * Get call report with filtering
  * GET /api/calls/report/?hospital_id=X&floor_no=Y&room_no=Z&status=W&start_date=A&end_date=B...
+ *
+ * API response shape:
+ * {
+ *   "statistics": { "mean_total_time_seconds": number, "median_total_time_seconds": number },
+ *   "calls": CallReportRecord[]
+ * }
  */
 export interface CallReportRecord extends CallRecord {
     response_time_seconds?: number;
     attend_delay_seconds?: number;
+}
+
+export interface CallReportStatistics {
+    mean_total_time_seconds: number;
+    median_total_time_seconds: number;
+}
+
+export interface CallReportResponse {
+    statistics: CallReportStatistics;
+    calls: CallReportRecord[];
 }
 
 export async function getCallReport(filters?: {
@@ -87,7 +111,7 @@ export async function getCallReport(filters?: {
     max_response_time?: number;
     min_attend_delay?: number;
     max_attend_delay?: number;
-}): Promise<CallReportRecord[]> {
+}): Promise<CallReportResponse> {
     const params = new URLSearchParams();
     if (filters?.hospital_id) params.append('hospital_id', String(filters.hospital_id));
     if (filters?.hospital_name) params.append('hospital_name', filters.hospital_name);
@@ -105,7 +129,7 @@ export async function getCallReport(filters?: {
     const query = params.toString();
     const endpoint = `/api/calls/report/${query ? `?${query}` : ''}`;
 
-    return apiRequest<CallReportRecord[]>(endpoint);
+    return apiRequest<CallReportResponse>(endpoint);
 }
 
 /**
@@ -119,17 +143,23 @@ export interface CallAnalytics {
     attended_calls: number;
     avg_response_time_seconds: number;
     avg_attend_delay_seconds: number;
+    mean_total_time_seconds: number;
+    median_total_time_seconds: number;
 }
 
 export async function getCallAnalytics(filters?: {
     hospital_id?: number;
     floor_no?: number;
+    corridoor_no?: string;
+    room_no?: string;
     start_date?: string;
     end_date?: string;
 }): Promise<CallAnalytics> {
     const params = new URLSearchParams();
     if (filters?.hospital_id) params.append('hospital_id', String(filters.hospital_id));
     if (filters?.floor_no) params.append('floor_no', String(filters.floor_no));
+    if (filters?.corridoor_no) params.append('corridoor_no', filters.corridoor_no);
+    if (filters?.room_no) params.append('room_no', filters.room_no);
     if (filters?.start_date) params.append('start_date', filters.start_date);
     if (filters?.end_date) params.append('end_date', filters.end_date);
 

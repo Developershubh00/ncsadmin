@@ -2,9 +2,10 @@ import React, { useState, useEffect, useRef } from 'react';
 import { FileText, Download, Lock } from 'lucide-react';
 import AdminAuth from '../components/AdminAuth';
 import AdminDashboard from '../components/AdminDashboard';
+import ConnectionStatusBadge from '../components/ConnectionStatusBadge';
 import { listCallEvents } from '../services/callService';
-import websocketService from '../services/websocketService';
-import type { CallRecord } from '../types/types';
+import { useNurseCallRealtime } from '../hooks/useNurseCallRealtime';
+import type { CallRecord, WSEvent } from '../types/types';
 
 interface Call {
   id: string;
@@ -146,63 +147,63 @@ const RealTimeMonitoring: React.FC = () => {
 
   const [codeBlueAlert, setCodeBlueAlert] = useState<{ room: string; ward: string } | null>(null);
 
-  // Fetch calls from API on mount and subscribe to WebSocket
+  // ── Real-time hook ─────────────────────────────────────────────────────────
+  const { connectionStatus, onEvent } = useNurseCallRealtime();
+
+  // Fetch calls from API on mount and subscribe to real-time events
   useEffect(() => {
     // Fetch both floors and calls on mount
     fetchFloorsFromAPI();
     fetchCallsFromAPI();
-    
-    // Setup WebSocket subscription for real-time updates
-    websocketService.connect();
-    const unsubscribe = websocketService.subscribe((event) => {
+
+    // Subscribe to real-time events via the hook
+    const unsubscribe = onEvent((payload) => {
+      const event = payload as WSEvent;
       if (event.event === 'call_created') {
-        // Add new call to display
         const newCall: Call = {
-          id: (event as any).call_id?.toString() || Math.random().toString(),
-          apiCallId: (event as any).call_id,
-          ward: (event as any).hospital_name || 'Unknown',
-          room: (event as any).room_no?.toString() || 'Unknown',
+          id: (event as WSEvent & { call_id?: number }).call_id?.toString() || Math.random().toString(),
+          apiCallId: (event as WSEvent & { call_id?: number }).call_id,
+          ward: (event as WSEvent & { hospital_name?: string }).hospital_name || 'Unknown',
+          room: (event as WSEvent & { room_no?: string }).room_no?.toString() || 'Unknown',
           type: 'Normal',
-          date: new Date((event as any).created_at).toLocaleDateString('en-GB'),
-          callTime: new Date((event as any).created_at).toLocaleTimeString('en-US', { hour12: false }),
+          date: new Date((event as WSEvent & { created_at?: string }).created_at || '').toLocaleDateString('en-GB'),
+          callTime: new Date((event as WSEvent & { created_at?: string }).created_at || '').toLocaleTimeString('en-US', { hour12: false }),
           isActive: true,
           status: 'unacknowledged',
         };
-        setCalls((prevCalls) => [...prevCalls, newCall]);
+        setCalls((prevCalls) => [newCall, ...prevCalls]);
       } else if (event.event === 'call_acknowledged') {
-        // Update call status to acknowledged
         setCalls((prevCalls) =>
           prevCalls.map((call) =>
-            call.apiCallId === (event as any).call_id
+            call.apiCallId === event.call_id
               ? {
                   ...call,
-                  status: 'acknowledged',
-                  responseTime: `${Math.floor(((event as any).response_time_seconds || 0) / 60).toString().padStart(2, '0')}:${(((event as any).response_time_seconds || 0) % 60).toString().padStart(2, '0')}`,
+                  status: 'acknowledged' as const,
+                  responseTime: `${Math.floor(((event as WSEvent & { response_time_seconds?: number }).response_time_seconds || 0) / 60).toString().padStart(2, '0')}:${(((event as WSEvent & { response_time_seconds?: number }).response_time_seconds || 0) % 60).toString().padStart(2, '0')}`,
                 }
               : call
           )
         );
       } else if (event.event === 'call_attended') {
-        // Mark call as attended/completed
         setCalls((prevCalls) =>
           prevCalls.map((call) =>
-            call.apiCallId === (event as any).call_id
+            call.apiCallId === event.call_id
               ? {
                   ...call,
                   isActive: false,
-                  status: 'attended',
-                  cancelTime: new Date((event as any).attended_at).toLocaleTimeString('en-US', { hour12: false }),
+                  status: 'attended' as const,
+                  cancelTime: new Date(event.attended_at).toLocaleTimeString('en-US', { hour12: false }),
                 }
               : call
           )
         );
       }
     });
-    
+
     return () => {
       unsubscribe();
     };
-  }, []);
+  }, [onEvent]);
 
   // Update current time every second
   useEffect(() => {
@@ -407,6 +408,7 @@ const RealTimeMonitoring: React.FC = () => {
               <h1 className="text-3xl font-bold text-gray-900">Real-Time Monitoring </h1>
             </div>
             <div className="flex items-center gap-6">
+              <ConnectionStatusBadge status={connectionStatus} />
               <div className="text-lg font-mono text-gray-700">{formatTime(currentTime)}</div>
               
             </div>

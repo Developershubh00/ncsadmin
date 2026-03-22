@@ -1,36 +1,28 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { Phone, Clock, CheckCircle, AlertCircle, ChevronRight, RefreshCw } from 'lucide-react';
 import StatCard from '../components/StatCard';
 import LineChart from '../components/LineChart';
 import * as callService from '../services/callService';
-import type { CallRecord } from '../types/types';
+import { hydrateStore } from '../services/nurseCallStore';
+import { useNurseCallRealtime } from '../hooks/useNurseCallRealtime';
+import ConnectionStatusBadge from '../components/ConnectionStatusBadge';
 
 const Dashboard: React.FC = () => {
   const [dateRange, setDateRange] = useState('week');
-  const [calls, setCalls] = useState<CallRecord[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [apiConnected, setApiConnected] = useState(false);
 
-  // Fetch calls from API
+  // ── Real-time store: initial REST fetch + live WS updates ────────────────
+  const { calls, loading, connectionStatus } = useNurseCallRealtime();
+  const apiConnected = connectionStatus !== 'disconnected';
+
+  // Manual refresh – re-hydrates the store so all subscribers update
   const fetchCalls = async () => {
     try {
       const data = await callService.listCallEvents();
-      setCalls(data);
-      setApiConnected(true);
+      hydrateStore(data);
     } catch {
-      setApiConnected(false);
-      // Fallback to demo data
-      setCalls([]);
-    } finally {
-      setLoading(false);
+      // hook already surfaces the error state
     }
   };
-
-  useEffect(() => {
-    fetchCalls();
-    const interval = setInterval(fetchCalls, 60000); // Refresh every minute
-    return () => clearInterval(interval);
-  }, []);
 
   // Compute real stats from API data
   const computeStats = () => {
@@ -161,10 +153,11 @@ const Dashboard: React.FC = () => {
           <h1 className="text-2xl font-bold text-gray-800">Dashboard</h1>
           <p className="text-gray-600">
             Overview of the Nurse Call System
-            {!apiConnected && <span className="ml-2 text-xs text-yellow-600">(Demo Mode)</span>}
+            {!apiConnected && <span className="ml-2 text-xs text-yellow-600">(Offline)</span>}
           </p>
         </div>
         <div className="flex items-center gap-3">
+          <ConnectionStatusBadge status={connectionStatus} />
           <button onClick={fetchCalls} className="p-2 hover:bg-gray-100 rounded-lg" title="Refresh">
             <RefreshCw size={18} className="text-gray-600" />
           </button>

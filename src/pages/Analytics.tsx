@@ -8,6 +8,8 @@ const Analytics: React.FC = () => {
   const [dateRange, setDateRange] = useState('week');
   const [filterFloor, setFilterFloor] = useState('');
   const [filterHospital, setFilterHospital] = useState('');
+  const [filterCorridoor, setFilterCorridoor] = useState('');
+  const [filterRoom, setFilterRoom] = useState('');
   const [analytics, setAnalytics] = useState<CallAnalytics | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -46,6 +48,8 @@ const Analytics: React.FC = () => {
       const filters = {
         ...(filterFloor && { floor_no: parseInt(filterFloor) }),
         ...(filterHospital && { hospital_id: parseInt(filterHospital) }),
+        ...(filterCorridoor && { corridoor_no: filterCorridoor }),
+        ...(filterRoom && { room_no: filterRoom }),
         ...dateFilters,
       };
       
@@ -64,7 +68,7 @@ const Analytics: React.FC = () => {
 
   useEffect(() => {
     fetchAnalytics();
-  }, [dateRange, filterFloor, filterHospital]);
+  }, [dateRange, filterFloor, filterHospital, filterCorridoor, filterRoom]);
   
   // Mock data for charts (still used as we don't have chart-specific endpoints yet)
   // In future, these charts can be replaced with API data if needed
@@ -236,12 +240,16 @@ const Analytics: React.FC = () => {
       `Date Range: ${dateRange}`,
       `Floor Filter: ${filterFloor || 'All'}`,
       `Hospital ID: ${filterHospital || 'All'}`,
+      `Corridor: ${filterCorridoor || 'All'}`,
+      `Room: ${filterRoom || 'All'}`,
       '',
       'KEY PERFORMANCE INDICATORS',
       'Metric,Value',
       `Total Calls,${analytics.total_calls}`,
       `Average Response Time (seconds),${analytics.avg_response_time_seconds}`,
       `Average Attend Delay (seconds),${analytics.avg_attend_delay_seconds}`,
+      `Mean Total Time (seconds),${analytics.mean_total_time_seconds}`,
+      `Median Total Time (seconds),${analytics.median_total_time_seconds}`,
       `Call Resolution Rate,${analytics.total_calls > 0 ? Math.round((analytics.attended_calls / analytics.total_calls) * 100) : 0}%`,
       '',
       'CALL STATUS SUMMARY',
@@ -285,8 +293,8 @@ const Analytics: React.FC = () => {
     
     const formatSeconds = (seconds: number) => {
       const minutes = Math.floor(seconds / 60);
-      const secs = seconds % 60;
-      return `${minutes}m ${secs}s`;
+      const secs = (seconds % 60).toFixed(2);
+      return `${minutes}m :${secs}s`;
     };
 
     const htmlContent = `
@@ -372,7 +380,7 @@ const Analytics: React.FC = () => {
         
         <div class="filters">
           <strong>Filters Applied:</strong><br/>
-          Date Range: ${dateRange} | Floor: ${filterFloor || 'All'} | Hospital ID: ${filterHospital || 'All'}
+          Date Range: ${dateRange} | Floor: ${filterFloor || 'All'} | Hospital ID: ${filterHospital || 'All'} | Corridor: ${filterCorridoor || 'All'} | Room: ${filterRoom || 'All'}
         </div>
 
         <div class="section">
@@ -393,6 +401,14 @@ const Analytics: React.FC = () => {
             <div class="kpi-box">
               <div class="kpi-label">Avg Attend Delay</div>
               <div class="kpi-value">${formatSeconds(analytics.avg_attend_delay_seconds)}</div>
+            </div>
+            <div class="kpi-box">
+              <div class="kpi-label">Mean Total Time</div>
+              <div class="kpi-value">${formatSeconds(analytics.mean_total_time_seconds)}</div>
+            </div>
+            <div class="kpi-box">
+              <div class="kpi-label">Median Total Time</div>
+              <div class="kpi-value">${formatSeconds(analytics.median_total_time_seconds)}</div>
             </div>
           </div>
         </div>
@@ -451,8 +467,8 @@ const Analytics: React.FC = () => {
 
   const formatSeconds = (seconds: number) => {
     const minutes = Math.floor(seconds / 60);
-    const secs = seconds % 60;
-    return `${minutes}m ${secs}s`;
+    const secs = (seconds % 60).toFixed(2);
+    return `${minutes}m :${secs}s`;
   };
 
   return (
@@ -542,6 +558,32 @@ const Analytics: React.FC = () => {
               className="block w-full px-3 py-2 rounded-md border border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
             />
           </div>
+          <div>
+            <label htmlFor="corridoor-filter" className="block text-sm font-medium text-gray-700 mb-1">
+              Corridor
+            </label>
+            <input
+              id="corridoor-filter"
+              type="text"
+              placeholder="e.g. A"
+              value={filterCorridoor}
+              onChange={(e) => setFilterCorridoor(e.target.value)}
+              className="block w-full px-3 py-2 rounded-md border border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
+            />
+          </div>
+          <div>
+            <label htmlFor="room-filter" className="block text-sm font-medium text-gray-700 mb-1">
+              Room No.
+            </label>
+            <input
+              id="room-filter"
+              type="text"
+              placeholder="e.g. 101"
+              value={filterRoom}
+              onChange={(e) => setFilterRoom(e.target.value)}
+              className="block w-full px-3 py-2 rounded-md border border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
+            />
+          </div>
           <div className="flex items-end">
             <button 
               onClick={handleGenerateReport}
@@ -582,6 +624,20 @@ const Analytics: React.FC = () => {
                   {analytics ? formatSeconds(analytics.avg_attend_delay_seconds) : '-'}
                 </p>
                 <p className="text-xs text-blue-600 mt-1">Acknowledged: {analytics?.acknowledged_calls || 0}</p>
+              </div>
+              <div className="p-4 bg-indigo-50 rounded-lg">
+                <p className="text-sm text-gray-600">Mean Total Time</p>
+                <p className="text-2xl font-semibold text-indigo-900">
+                  {analytics ? formatSeconds(analytics.mean_total_time_seconds) : '-'}
+                </p>
+                <p className="text-xs text-indigo-600 mt-1">Call create → attended</p>
+              </div>
+              <div className="p-4 bg-purple-50 rounded-lg">
+                <p className="text-sm text-gray-600">Median Total Time</p>
+                <p className="text-2xl font-semibold text-purple-900">
+                  {analytics ? formatSeconds(analytics.median_total_time_seconds) : '-'}
+                </p>
+                <p className="text-xs text-purple-600 mt-1">Call create → attended</p>
               </div>
             </div>
           </div>

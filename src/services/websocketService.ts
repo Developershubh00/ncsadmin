@@ -2,7 +2,23 @@ import type { WSEvent } from '../types/types';
 
 type EventCallback = (event: WSEvent) => void;
 
-const WS_URL = import.meta.env.VITE_WS_URL || 'ws://localhost:8000/ws/notifications/';
+// Derive WS URL from VITE_WS_URL env var (preferred), or auto-build from
+// VITE_API_BASE_URL converting http→ws / https→wss. Falls back to the current
+// page's host so it works in any environment without hardcoded addresses.
+const WS_URL = (() => {
+    if (import.meta.env.VITE_WS_URL) {
+        return import.meta.env.VITE_WS_URL as string;
+    }
+    const base = import.meta.env.VITE_API_BASE_URL as string | undefined;
+    if (base) {
+        const host = base.replace(/^https?:\/\//, '').replace(/\/$/, '');
+        const protocol = base.startsWith('https://') ? 'wss' : 'ws';
+        return `${protocol}://${host}/ws/notifications/`;
+    }
+    // Last-resort: mirror the running page's protocol
+    const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
+    return `${protocol}://${window.location.host}/ws/notifications/`;
+})();
 
 class WebSocketService {
     private ws: WebSocket | null = null;
@@ -21,7 +37,7 @@ class WebSocketService {
         }
 
         this.isConnecting = true;
-
+        console.log('[WS] Connecting to', WS_URL);
         try {
             this.ws = new WebSocket(WS_URL);
 
@@ -33,22 +49,31 @@ class WebSocketService {
 
             this.ws.onmessage = (event) => {
                 try {
-                    const data: WSEvent = JSON.parse(event.data);
+                    const data = JSON.parse(event.data as string) as Record<string, unknown>;
+
+                    // Skip the welcome handshake — it is not a call event
+                    if (data.event === 'connection_established') {
+                        console.log('[WS] Handshake:', data.message);
+                        return;
+                    }
+
                     console.log('[WS] Event received:', data.event);
-                    this.callbacks.forEach((cb) => cb(data));
+                    this.callbacks.forEach((cb) => cb(data as unknown as WSEvent));
                 } catch (err) {
                     console.error('[WS] Failed to parse message:', err);
                 }
             };
 
             this.ws.onclose = (event) => {
-                console.log('[WS] Connection closed:', event.code, event.reason);
+                console.warn('[WS] Connection closed:', event.code, event.reason);
                 this.isConnecting = false;
+                this.ws = null;  // clear ref so readyState guard works on next connect()
                 this.attemptReconnect();
             };
 
             this.ws.onerror = (err) => {
                 console.error('[WS] Connection error:', err);
+                // onclose fires right after onerror — reconnect is handled there
                 this.isConnecting = false;
             };
         } catch (err) {
