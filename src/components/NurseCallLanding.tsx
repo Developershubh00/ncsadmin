@@ -2079,7 +2079,8 @@ const NurseCallLanding: React.FC<NurseCallLandingProps> = ({
         }
 
       // ─────────────────────────────────────────────────────────────
-      // CALL ATTENDED / RESOLVED / CLOSED — remove the call entirely
+      // CALL ATTENDED / RESOLVED / CLOSED — remove the call,
+      // UNLESS it is a Code Blue — those must be manually acknowledged.
       // ─────────────────────────────────────────────────────────────
       } else if (
         event.event === 'call_attended'  ||
@@ -2088,10 +2089,15 @@ const NurseCallLanding: React.FC<NurseCallLandingProps> = ({
         event.event === 'call_completed'
       ) {
         const callIdStr = String(event.call_id);
-        const isCurrent = currentCallRef.current != null &&
-          String(currentCallRef.current.apiCallId) === callIdStr;
+        const target = currentCallRef.current != null &&
+          String(currentCallRef.current.apiCallId) === callIdStr
+          ? currentCallRef.current : null;
+
+        // CODE BLUE: never auto-clear — it needs a human to ACK from the station
+        if (target?.eventType === 'code_blue') return;
+
         clearCallByIdRef.current(callIdStr);
-        if (isCurrent) {
+        if (target) {
           stopAllSounds();
           setCallBoxState('idle');
         }
@@ -2213,7 +2219,7 @@ const NurseCallLanding: React.FC<NurseCallLandingProps> = ({
       )}
 
       {/* Header */}
-      <div className="bg-white border-4 border-black">
+      {/* <div className="bg-white border-4 border-black">
         <div className="flex justify-between items-center px-6 py-4">
           <div className="flex items-center space-x-4">
             <div className="w-12 h-12 flex items-center justify-center">
@@ -2222,11 +2228,11 @@ const NurseCallLanding: React.FC<NurseCallLandingProps> = ({
                   className="w-full h-full object-contain rounded-full border-2 border-gray-300 bg-white p-1"
                   onError={() => setLogoError(true)} />
               ) : (
-                <img src="/logo system tek.png" alt="Hospital Logo"
-                  className="w-full h-full object-contain rounded-full border-2 border-gray-300 bg-white p-1" />
+                <img src="/ncs.png" alt="Hospital Logo"
+                  className="w-full h-full object-contain border-gray-300 bg-white p-1" />
               )}
             </div>
-            <h1 className="text-2xl font-bold">NURSE CALL MONITORING</h1>
+            <h1 className="text-2xl font-bold">NURSE CALL SYSTEM</h1>
           </div>
           <div className="text-xl font-semibold">{getCurrentDate()}</div>
           <button onClick={() => setShowLogin(true)}
@@ -2235,7 +2241,30 @@ const NurseCallLanding: React.FC<NurseCallLandingProps> = ({
             <User size={24} />
           </button>
         </div>
+      </div> */}
+      <div className="bg-white border-4 border-black">
+  <div className="flex justify-between items-center px-6 py-2">
+    <div className="flex items-center space-x-4">
+      <div className="w-24 h-24 flex items-center justify-center">
+        {!logoError ? (
+          <img src={logoUrl} alt="Hospital Logo"
+            className="w-full h-full object-contain"
+            onError={() => setLogoError(true)} />
+        ) : (
+          <img src="/ncs.png" alt="Hospital Logo"
+            className="w-full h-full object-contain" />
+        )}
       </div>
+      <h1 className="text-2xl font-bold">NURSE CALL SYSTEM</h1>
+    </div>
+    <div className="text-xl font-semibold">{getCurrentDate()}</div>
+    <button onClick={() => setShowLogin(true)}
+      className="bg-blue-600 hover:bg-blue-700 text-white p-3 rounded-full transition-colors shadow-lg"
+      title="Admin Login">
+      <User size={24} />
+    </button>
+  </div>
+</div>
 
       {/* Main content */}
       <div className="p-6 bg-white">
