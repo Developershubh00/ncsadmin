@@ -57,7 +57,24 @@ class WebSocketService {
                         return;
                     }
 
-                    console.log('[WS] Event received:', data.event);
+                    console.group(`[WS] ▶ Event: ${data.event}`);
+                    console.log('[WS] Raw payload:', JSON.stringify(data, null, 2));
+                    console.log('[WS] Parsed fields:', {
+                        event:        data.event,
+                        call_id:      data.call_id,
+                        room_no:      data.room_no,
+                        bed_no:       data.bed_no,
+                        floor_no:     data.floor_no,
+                        corridoor_no: data.corridoor_no,
+                        call_from:    data.call_from,
+                        hospital:     data.hospital ?? data.hospital_name,
+                        created_at:   data.created_at,
+                        acknowledged_at: data.acknowledged_at,
+                        attended_at:  data.attended_at,
+                        message:      data.message,
+                    });
+                    console.log('[WS] Timestamp:', new Date().toISOString());
+                    console.groupEnd();
                     this.callbacks.forEach((cb) => cb(data as unknown as WSEvent));
                 } catch (err) {
                     console.error('[WS] Failed to parse message:', err);

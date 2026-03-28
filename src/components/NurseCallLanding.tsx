@@ -230,6 +230,23 @@ if (typeof document !== 'undefined' && !document.getElementById(STYLE_ID)) {
 // ─── Component ────────────────────────────────────────────────────────────────
 type CallBoxState = 'idle' | 'nurse_call' | 'toilet_emergency' | 'staff_assist' | 'code_blue' | 'ack' | 'siren';
 
+/** Derive box state for a single call (used by small grid boxes) */
+function boxStateForCall(call: Call, now: Date): CallBoxState {
+  if (call.acknowledged) return 'ack';
+  const diffMin = (now.getTime() - call.timestamp.getTime()) / 60000;
+  if (diffMin >= 3) return 'siren';
+  return call.eventType;
+}
+
+/** Text color for a given box state */
+function textColorForState(state: CallBoxState): string {
+  const dark = state === 'nurse_call' || state === 'toilet_emergency' || state === 'code_blue' || state === 'siren';
+  if (dark) return 'text-white';
+  if (state === 'ack') return 'text-yellow-900';
+  if (state === 'staff_assist') return 'text-white';
+  return 'text-gray-800';
+}
+
 const NurseCallLanding: React.FC<NurseCallLandingProps> = ({
   onLoginSuccess,
   logoUrl = '/logo.png',
@@ -239,8 +256,10 @@ const NurseCallLanding: React.FC<NurseCallLandingProps> = ({
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [isLoggingIn, setIsLoggingIn] = useState(false);
-  const [currentCall, setCurrentCall] = useState<Call | null>(null);
-  const [previousCalls, setPreviousCalls] = useState<Call[]>([]);
+
+  // ── Single queue: callQueue[0] is the "current" big box, [1..10] fill the 10 small boxes ──
+  const [callQueue, setCallQueue] = useState<Call[]>([]);
+
   const [faultCount, setFaultCount] = useState(0);
   const [showAlert, setShowAlert] = useState(false);
   const [alertCall, setAlertCall] = useState<Call | null>(null);
@@ -252,22 +271,10 @@ const NurseCallLanding: React.FC<NurseCallLandingProps> = ({
   // Sound stop-functions stored in refs so they survive re-renders
   const stopBeepRef = useRef<(() => void) | null>(null);
   const stopSirenRef = useRef<(() => void) | null>(null);
-  // Synchronous set of call IDs already shown — used for dedup between REST load and WS events
-  const loadedCallIdsRef = useRef<Set<string>>(new Set());
-  // Refs for stale-closure-free access inside WS callbacks
-  const currentCallRef = useRef<Call | null>(null);
 
-  /**
-   * Use a ref-backed function so the WS useEffect can depend on [] and
-   * never re-subscribe unexpectedly (avoids StrictMode double-fire issues).
-   */
-  const clearCallByIdRef = useRef((callIdStr: string) => {
-    loadedCallIdsRef.current.delete(callIdStr);
-    setCurrentCall(prev =>
-      prev && String(prev.apiCallId) === callIdStr ? null : prev
-    );
-    setPreviousCalls(prev => prev.filter(c => String(c.apiCallId) !== callIdStr));
-  });
+  // Ref for stale-closure-free access inside WS callbacks
+  const callQueueRef = useRef<Call[]>([]);
+  useEffect(() => { callQueueRef.current = callQueue; }, [callQueue]);
 
   const stopAllSounds = useCallback(() => {
     stopBeepRef.current?.();
@@ -276,16 +283,9 @@ const NurseCallLanding: React.FC<NurseCallLandingProps> = ({
     stopSirenRef.current = null;
   }, []);
 
-  // ── Keep refs in sync so WS callbacks always see latest state ──
-  useEffect(() => { currentCallRef.current = currentCall; }, [currentCall]);
-
-  // ── Promote first previous call when currentCall becomes null ──
-  useEffect(() => {
-    if (!currentCall && previousCalls.length > 0) {
-      setCurrentCall(previousCalls[0]);
-      setPreviousCalls(p => p.slice(1));
-    }
-  }, [currentCall, previousCalls]);
+  // Derived helpers
+  const currentCall = callQueue[0] ?? null;
+  const previousCalls = callQueue.slice(1, 11);
 
   // ── Clock ──
   useEffect(() => {
@@ -293,7 +293,7 @@ const NurseCallLanding: React.FC<NurseCallLandingProps> = ({
     return () => clearInterval(t);
   }, []);
 
-  // ── Box-state machine: driven by currentCall ID *and* acknowledged flag ──
+  // ── Box-state machine: driven by currentCall ID + acknowledged flag ──
   useEffect(() => {
     if (!currentCall) {
       stopAllSounds();
@@ -308,6 +308,7 @@ const NurseCallLanding: React.FC<NurseCallLandingProps> = ({
     stopAllSounds();
     setCallBoxState(currentCall.eventType);
     stopBeepRef.current = startSoundForEventType(currentCall.eventType);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentCall?.id, currentCall?.acknowledged]);
 
   // ── 3-minute siren escalation ──
@@ -316,7 +317,7 @@ const NurseCallLanding: React.FC<NurseCallLandingProps> = ({
     const diffMs = currentTime.getTime() - currentCall.timestamp.getTime();
     const diffMin = diffMs / 60000;
 
-    if (diffMin >= 3) {
+    if (diffMin >= 3 && !currentCall.acknowledged) {
       if (callBoxState !== 'siren' && callBoxState !== 'ack') {
         stopBeepRef.current?.();
         stopBeepRef.current = null;
@@ -326,6 +327,7 @@ const NurseCallLanding: React.FC<NurseCallLandingProps> = ({
         stopSirenRef.current = startSiren();
       }
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentTime]);
 
   // ── Load initial data + WebSocket ──
@@ -349,11 +351,8 @@ const NurseCallLanding: React.FC<NurseCallLandingProps> = ({
             apiBedNo: c.bed_no || c.room_no,
             eventType: resolveEventType(c.call_from),
           }));
-        // Synchronously register all REST-loaded IDs so WS dedup fires correctly
-        loadedCallIdsRef.current = new Set(mapped.map(c => c.id));
         if (mapped.length > 0) {
-          setCurrentCall(mapped[0]);
-          setPreviousCalls(mapped.slice(1, 11));
+          setCallQueue(mapped.slice(0, 11));
         }
       })
       .catch(() => {
@@ -364,19 +363,11 @@ const NurseCallLanding: React.FC<NurseCallLandingProps> = ({
     websocketService.connect();
     const unsub = websocketService.subscribe((event: WSEvent) => {
 
-      // ─────────────────────────────────────────────────────────────
-      // CALL CREATED — add to queue, deduplicate
-      // Also handles a dedicated 'code_blue' event some backends fire
-      // ─────────────────────────────────────────────────────────────
+      // ── CALL CREATED / CODE BLUE ──
       if (event.event === 'call_created' || event.event === 'code_blue') {
         const callIdStr = String(event.call_id);
-
-        // Skip if already loaded via REST or a previous WS fire
-        if (loadedCallIdsRef.current.has(callIdStr)) return;
-        loadedCallIdsRef.current.add(callIdStr);
-
         const resolvedType = event.event === 'code_blue'
-          ? 'code_blue'
+          ? 'code_blue' as EventType
           : resolveEventType(event.call_from);
 
         const nc: Call = {
@@ -394,37 +385,20 @@ const NurseCallLanding: React.FC<NurseCallLandingProps> = ({
           apiBedNo: event.bed_no || event.room_no,
           eventType: resolvedType,
         };
-        setCurrentCall(prev => {
-          if (prev) setPreviousCalls(p => [prev, ...p].slice(0, 10));
-          return nc;
-        });
+        setCallQueue(prev =>
+          prev.some(c => String(c.apiCallId) === callIdStr)
+            ? prev
+            : [nc, ...prev].slice(0, 11)
+        );
 
-      // ─────────────────────────────────────────────────────────────
-      // CALL ACKNOWLEDGED — keep the call but turn it YELLOW
-      // (regardless of whether it came from the nurse panel or the bed)
-      // ─────────────────────────────────────────────────────────────
+      // ── CALL ACKNOWLEDGED ──
       } else if (event.event === 'call_acknowledged') {
         const callIdStr = String(event.call_id);
-        const isCurrent = currentCallRef.current != null &&
-          String(currentCallRef.current.apiCallId) === callIdStr;
-        // Mark acknowledged on the call object (triggers box-state effect → 'ack')
-        setCurrentCall(prev =>
-          prev && String(prev.apiCallId) === callIdStr ? { ...prev, acknowledged: true } : prev
-        );
-        setPreviousCalls(prev =>
-          prev.map(c =>
-            String(c.apiCallId) === callIdStr ? { ...c, acknowledged: true } : c
-          )
-        );
-        if (isCurrent) {
-          stopAllSounds();
-          setCallBoxState('ack');
-        }
+        setCallQueue(prev => prev.map(c =>
+          String(c.apiCallId) === callIdStr ? { ...c, acknowledged: true } : c
+        ));
 
-      // ─────────────────────────────────────────────────────────────
-      // CALL ATTENDED / RESOLVED / CLOSED — remove the call,
-      // UNLESS it is a Code Blue — those must be manually acknowledged.
-      // ─────────────────────────────────────────────────────────────
+      // ── CALL ATTENDED / RESOLVED / CLOSED ──
       } else if (
         event.event === 'call_attended'  ||
         event.event === 'call_resolved'  ||
@@ -432,18 +406,7 @@ const NurseCallLanding: React.FC<NurseCallLandingProps> = ({
         event.event === 'call_completed'
       ) {
         const callIdStr = String(event.call_id);
-        const target = currentCallRef.current != null &&
-          String(currentCallRef.current.apiCallId) === callIdStr
-          ? currentCallRef.current : null;
-
-        // CODE BLUE: never auto-clear — it needs a human to ACK from the station
-        if (target?.eventType === 'code_blue') return;
-
-        clearCallByIdRef.current(callIdStr);
-        if (target) {
-          stopAllSounds();
-          setCallBoxState('idle');
-        }
+        setCallQueue(prev => prev.filter(c => String(c.apiCallId) !== callIdStr));
       }
     });
 
@@ -451,28 +414,28 @@ const NurseCallLanding: React.FC<NurseCallLandingProps> = ({
       unsub();
       stopAllSounds();
     };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []); // [] — intentional: WS subscription must never re-run and double-subscribe
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // ── Duration ──
   const getCallDuration = (timestamp: Date): string => {
     try {
       if (!timestamp || isNaN(timestamp.getTime())) return '00:00';
-      const diff = Math.max(0, Math.floor((new Date().getTime() - timestamp.getTime()) / 1000));
-      return `${String(Math.floor(diff/60)).padStart(2,'0')}:${String(diff%60).padStart(2,'0')}`;
+      const diff = Math.max(0, Math.floor((currentTime.getTime() - timestamp.getTime()) / 1000));
+      return `${String(Math.floor(diff / 60)).padStart(2, '0')}:${String(diff % 60).padStart(2, '0')}`;
     } catch { return '00:00'; }
   };
 
   const getCurrentCallDuration = () => currentCall ? getCallDuration(currentCall.timestamp) : '00:00';
 
   // ── Acknowledge ──
-  // Optimistically turn the box yellow, then call the API.
-  // The WS event `call_acknowledged` will keep it yellow;
-  // `call_attended` (or resolved/closed) will clear it.
   const handleAcknowledge = async () => {
     if (!currentCall) return;
 
     // Optimistic UI — go yellow immediately
+    setCallQueue(prev => prev.map((c, i) =>
+      i === 0 ? { ...c, acknowledged: true } : c
+    ));
     stopAllSounds();
     setCallBoxState('ack');
     setShowAlert(false);
@@ -505,11 +468,11 @@ const NurseCallLanding: React.FC<NurseCallLandingProps> = ({
     }
   };
 
-  const getCurrentDate = () => new Date().toLocaleDateString('en-GB', { day:'2-digit', month:'2-digit', year:'numeric' });
+  const getCurrentDate = () => new Date().toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' });
 
-  const totalCalls = (currentCall ? 1 : 0) + previousCalls.length;
+  const totalCalls = callQueue.length;
 
-  // ── Box class helpers ──
+  // ── Box class helpers for the MAIN (big) box ──
   const isRedEvent   = callBoxState === 'nurse_call' || callBoxState === 'toilet_emergency';
   const isYellowEvent = callBoxState === 'staff_assist';
   const isBlueEvent  = callBoxState === 'code_blue';
@@ -517,28 +480,26 @@ const NurseCallLanding: React.FC<NurseCallLandingProps> = ({
 
   const mainBoxClass = `border-4 border-black h-40 flex items-center justify-center shadow-lg call-box-${callBoxState}`;
 
-  // White text on all dark/colored backgrounds so text is always readable
   const textColorClass =
-    isDarkBg                              ? 'text-white'      :
-    callBoxState === 'ack'                ? 'text-yellow-900' :
-    isYellowEvent                         ? 'text-white'      :
+    isDarkBg           ? 'text-white'      :
+    callBoxState === 'ack' ? 'text-yellow-900' :
+    isYellowEvent      ? 'text-white'      :
     'text-gray-800';
 
-  // Timer badge: high-contrast pill on top of the box background
   const timerBadgeClass =
-    isDarkBg                              ? 'text-red-900 bg-white'         :
-    callBoxState === 'ack'                ? 'text-yellow-900 bg-yellow-200' :
-    isYellowEvent                         ? 'text-yellow-900 bg-yellow-100' :
+    isDarkBg           ? 'text-red-900 bg-white'         :
+    callBoxState === 'ack' ? 'text-yellow-900 bg-yellow-200' :
+    isYellowEvent      ? 'text-yellow-900 bg-yellow-100' :
     'text-gray-700 bg-gray-100';
 
   const eventLabel: Record<CallBoxState, string> = {
-    idle:                 'STANDBY',
-    nurse_call:           '🔴 NURSE CALL',
-    toilet_emergency:     '🔴 TOILET EMERGENCY',
-    staff_assist:         '🟡 STAFF ASSIST',
-    code_blue:            '🔵 CODE BLUE',
-    ack:                  'ACKNOWLEDGED',
-    siren:                '🚨 ALERT — UNATTENDED',
+    idle:             'STANDBY',
+    nurse_call:       '🔴 NURSE CALL',
+    toilet_emergency: '🔴 TOILET EMERGENCY',
+    staff_assist:     '🟡 STAFF ASSIST',
+    code_blue:        '🔵 CODE BLUE',
+    ack:              'ACKNOWLEDGED',
+    siren:            '🚨 ALERT — UNATTENDED',
   };
 
   const dotClass = `dot-base dot-${callBoxState}`;
@@ -562,17 +523,17 @@ const NurseCallLanding: React.FC<NurseCallLandingProps> = ({
       )}
 
       {/* Header */}
-      {/* <div className="bg-white border-4 border-black">
-        <div className="flex justify-between items-center px-6 py-4">
+      <div className="bg-white border-4 border-black">
+        <div className="flex justify-between items-center px-6 py-2">
           <div className="flex items-center space-x-4">
-            <div className="w-12 h-12 flex items-center justify-center">
+            <div className="w-24 h-24 flex items-center justify-center">
               {!logoError ? (
                 <img src={logoUrl} alt="Hospital Logo"
-                  className="w-full h-full object-contain rounded-full border-2 border-gray-300 bg-white p-1"
+                  className="w-full h-full object-contain"
                   onError={() => setLogoError(true)} />
               ) : (
                 <img src="/ncs.png" alt="Hospital Logo"
-                  className="w-full h-full object-contain border-gray-300 bg-white p-1" />
+                  className="w-full h-full object-contain" />
               )}
             </div>
             <h1 className="text-2xl font-bold">NURSE CALL SYSTEM</h1>
@@ -584,35 +545,12 @@ const NurseCallLanding: React.FC<NurseCallLandingProps> = ({
             <User size={24} />
           </button>
         </div>
-      </div> */}
-      <div className="bg-white border-4 border-black">
-  <div className="flex justify-between items-center px-6 py-2">
-    <div className="flex items-center space-x-4">
-      <div className="w-24 h-24 flex items-center justify-center">
-        {!logoError ? (
-          <img src={logoUrl} alt="Hospital Logo"
-            className="w-full h-full object-contain"
-            onError={() => setLogoError(true)} />
-        ) : (
-          <img src="/ncs.png" alt="Hospital Logo"
-            className="w-full h-full object-contain" />
-        )}
       </div>
-      <h1 className="text-2xl font-bold">NURSE CALL SYSTEM</h1>
-    </div>
-    <div className="text-xl font-semibold">{getCurrentDate()}</div>
-    <button onClick={() => setShowLogin(true)}
-      className="bg-blue-600 hover:bg-blue-700 text-white p-3 rounded-full transition-colors shadow-lg"
-      title="Admin Login">
-      <User size={24} />
-    </button>
-  </div>
-</div>
 
       {/* Main content */}
       <div className="p-6 bg-white">
 
-        {/* ── Current Call Box ── */}
+        {/* ── Current Call Box (big) ── */}
         <div className="mb-6">
           <div className={mainBoxClass}>
             {currentCall ? (
@@ -637,19 +575,29 @@ const NurseCallLanding: React.FC<NurseCallLandingProps> = ({
           </div>
         </div>
 
-        {/* ── Previous Calls ── */}
+        {/* ── Previous Calls (2 rows × 5 boxes, each colored by event type) ── */}
         <div className="mb-6">
           <div className="grid grid-cols-5 gap-4 mb-4">
             {Array.from({ length: 5 }, (_, i) => {
               const call = previousCalls[i];
+              const state = call ? boxStateForCall(call, currentTime) : 'idle';
+              const txtClr = call ? textColorForState(state) : '';
               return (
-                <div key={`r1-${i}`} className="border-2 border-black bg-white h-24 flex items-center justify-center shadow-md">
+                <div key={`r1-${i}`}
+                  className={`border-2 border-black h-24 flex items-center justify-center shadow-md call-box-${state}`}>
                   {call ? (
                     <div className="text-center px-2">
-                      <div className="text-sm font-bold text-black mb-1">{call.floor}{call.wing ? `, ${call.wing}` : ''}</div>
-                      <div className="text-xs text-gray-600 mb-1">ROOM {call.roomNo} · BED {call.bedNumber}</div>
-                      <div className="text-xs font-mono text-blue-600 bg-blue-50 px-2 py-1 rounded">
-                        {getCallDuration(call.timestamp)}
+                      <div className={`text-[10px] font-bold uppercase tracking-wider ${txtClr} opacity-70`}>
+                        {eventLabel[state]}
+                      </div>
+                      <div className={`text-sm font-bold ${txtClr} mb-1`}>
+                        {call.floor}{call.wing ? `, ${call.wing}` : ''}
+                      </div>
+                      <div className={`text-xs ${txtClr} opacity-80 mb-1`}>
+                        ROOM {call.roomNo} · BED {call.bedNumber}
+                      </div>
+                      <div className={`text-xs font-mono ${state === 'ack' ? 'text-yellow-800 bg-yellow-200' : state === 'siren' ? 'text-red-900 bg-white' : 'text-blue-600 bg-blue-50'} px-2 py-0.5 rounded`}>
+                        ⏱ {getCallDuration(call.timestamp)}
                       </div>
                     </div>
                   ) : <div className="text-xs text-gray-200" />}
@@ -660,14 +608,24 @@ const NurseCallLanding: React.FC<NurseCallLandingProps> = ({
           <div className="grid grid-cols-5 gap-4">
             {Array.from({ length: 5 }, (_, i) => {
               const call = previousCalls[i + 5];
+              const state = call ? boxStateForCall(call, currentTime) : 'idle';
+              const txtClr = call ? textColorForState(state) : '';
               return (
-                <div key={`r2-${i}`} className="border-2 border-black bg-white h-24 flex items-center justify-center shadow-md">
+                <div key={`r2-${i}`}
+                  className={`border-2 border-black h-24 flex items-center justify-center shadow-md call-box-${state}`}>
                   {call ? (
                     <div className="text-center px-2">
-                      <div className="text-sm font-bold text-black mb-1">{call.floor}{call.wing ? `, ${call.wing}` : ''}</div>
-                      <div className="text-xs text-gray-600 mb-1">ROOM {call.roomNo} · BED {call.bedNumber}</div>
-                      <div className="text-xs font-mono text-blue-600 bg-blue-50 px-2 py-1 rounded">
-                        {getCallDuration(call.timestamp)}
+                      <div className={`text-[10px] font-bold uppercase tracking-wider ${txtClr} opacity-70`}>
+                        {eventLabel[state]}
+                      </div>
+                      <div className={`text-sm font-bold ${txtClr} mb-1`}>
+                        {call.floor}{call.wing ? `, ${call.wing}` : ''}
+                      </div>
+                      <div className={`text-xs ${txtClr} opacity-80 mb-1`}>
+                        ROOM {call.roomNo} · BED {call.bedNumber}
+                      </div>
+                      <div className={`text-xs font-mono ${state === 'ack' ? 'text-yellow-800 bg-yellow-200' : state === 'siren' ? 'text-red-900 bg-white' : 'text-blue-600 bg-blue-50'} px-2 py-0.5 rounded`}>
+                        ⏱ {getCallDuration(call.timestamp)}
                       </div>
                     </div>
                   ) : <div className="text-xs text-gray-200" />}
@@ -696,7 +654,7 @@ const NurseCallLanding: React.FC<NurseCallLandingProps> = ({
             </div>
 
             <button onClick={handleAcknowledge}
-              disabled={!currentCall && previousCalls.length === 0}
+              disabled={callQueue.length === 0}
               className="bg-green-500 hover:bg-green-600 text-white px-12 py-4 rounded-full font-bold text-xl transition-colors shadow-lg disabled:bg-gray-400 disabled:cursor-not-allowed flex items-center space-x-2">
               <div className="w-4 h-4 bg-white rounded-full" />
               <span>ACKNOWLEDGE</span>
