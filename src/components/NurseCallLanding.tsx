@@ -230,12 +230,38 @@ if (typeof document !== 'undefined' && !document.getElementById(STYLE_ID)) {
 // ─── Component ────────────────────────────────────────────────────────────────
 type CallBoxState = 'idle' | 'nurse_call' | 'toilet_emergency' | 'staff_assist' | 'code_blue' | 'ack' | 'siren';
 
+/** Sort queue so unacknowledged code_blue calls always float to the top */
+function sortWithCodeBluePriority(calls: Call[]): Call[] {
+  return [...calls].sort((a, b) => {
+    const aPri = a.eventType === 'code_blue' && !a.acknowledged ? 1 : 0;
+    const bPri = b.eventType === 'code_blue' && !b.acknowledged ? 1 : 0;
+    if (aPri !== bPri) return bPri - aPri;
+    return 0;
+  });
+}
+
 /** Derive box state for a single call (used by small grid boxes) */
 function boxStateForCall(call: Call, now: Date): CallBoxState {
-  if (call.acknowledged) return 'ack';
   const diffMin = (now.getTime() - call.timestamp.getTime()) / 60000;
-  if (diffMin >= 3) return 'siren';
+  if (diffMin >= 3) return 'siren';           // siren until attended, even after ack
+  if (call.acknowledged) return 'ack';
   return call.eventType;
+}
+
+/** Human-readable label for an event type */
+const eventTypeLabel: Record<EventType, string> = {
+  nurse_call:        '🔴 NURSE CALL',
+  toilet_emergency:  '🔴 TOILET EMERGENCY',
+  staff_assist:      '🟡 STAFF ASSIST',
+  code_blue:         '🔵 CODE BLUE',
+};
+
+/** Build display label that keeps event type visible in ack/siren states */
+function buildDisplayLabel(state: CallBoxState, eventType: EventType): string {
+  if (state === 'ack')   return `✅ ACK · ${eventTypeLabel[eventType]}`;
+  if (state === 'siren') return `🚨 UNATTENDED · ${eventTypeLabel[eventType]}`;
+  if (state === 'idle')  return 'STANDBY';
+  return eventTypeLabel[eventType];
 }
 
 /** Text color for a given box state */
@@ -300,6 +326,18 @@ const NurseCallLanding: React.FC<NurseCallLandingProps> = ({
       setCallBoxState('idle');
       return;
     }
+    const diffMin = (Date.now() - currentCall.timestamp.getTime()) / 60000;
+    if (diffMin >= 3) {
+      // Already past 3 min — go straight to siren (even if ack'd)
+      if (callBoxState !== 'siren') {
+        stopAllSounds();
+        setCallBoxState('siren');
+        setAlertCall(currentCall);
+        setShowAlert(true);
+        stopSirenRef.current = startSiren();
+      }
+      return;
+    }
     if (currentCall.acknowledged) {
       stopAllSounds();
       setCallBoxState('ack');
@@ -311,21 +349,18 @@ const NurseCallLanding: React.FC<NurseCallLandingProps> = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentCall?.id, currentCall?.acknowledged]);
 
-  // ── 3-minute siren escalation ──
+  // ── 3-minute siren escalation (fires even if acknowledged) ──
   useEffect(() => {
     if (!currentCall || !currentCall.timestamp) return;
     const diffMs = currentTime.getTime() - currentCall.timestamp.getTime();
     const diffMin = diffMs / 60000;
 
-    if (diffMin >= 3 && !currentCall.acknowledged) {
-      if (callBoxState !== 'siren' && callBoxState !== 'ack') {
-        stopBeepRef.current?.();
-        stopBeepRef.current = null;
-        setCallBoxState('siren');
-        setAlertCall(currentCall);
-        setShowAlert(true);
-        stopSirenRef.current = startSiren();
-      }
+    if (diffMin >= 3 && callBoxState !== 'siren') {
+      stopAllSounds();
+      setCallBoxState('siren');
+      setAlertCall(currentCall);
+      setShowAlert(true);
+      stopSirenRef.current = startSiren();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentTime]);
@@ -352,7 +387,7 @@ const NurseCallLanding: React.FC<NurseCallLandingProps> = ({
             eventType: resolveEventType(c.call_from),
           }));
         if (mapped.length > 0) {
-          setCallQueue(mapped.slice(0, 11));
+          setCallQueue(sortWithCodeBluePriority(mapped).slice(0, 11));
         }
       })
       .catch(() => {
@@ -388,15 +423,15 @@ const NurseCallLanding: React.FC<NurseCallLandingProps> = ({
         setCallQueue(prev =>
           prev.some(c => String(c.apiCallId) === callIdStr)
             ? prev
-            : [nc, ...prev].slice(0, 11)
+            : sortWithCodeBluePriority([nc, ...prev]).slice(0, 11)
         );
 
       // ── CALL ACKNOWLEDGED ──
       } else if (event.event === 'call_acknowledged') {
         const callIdStr = String(event.call_id);
-        setCallQueue(prev => prev.map(c =>
+        setCallQueue(prev => sortWithCodeBluePriority(prev.map(c =>
           String(c.apiCallId) === callIdStr ? { ...c, acknowledged: true } : c
-        ));
+        )));
 
       // ── CALL ATTENDED / RESOLVED / CLOSED ──
       } else if (
@@ -431,16 +466,24 @@ const NurseCallLanding: React.FC<NurseCallLandingProps> = ({
   // ── Acknowledge ──
   const handleAcknowledge = async () => {
     if (!currentCall) return;
+    const diffMin = (currentTime.getTime() - currentCall.timestamp.getTime()) / 60000;
 
-    // Optimistic UI — go yellow immediately
+    // Optimistic UI — mark acknowledged
     setCallQueue(prev => prev.map((c, i) =>
       i === 0 ? { ...c, acknowledged: true } : c
     ));
-    stopAllSounds();
-    setCallBoxState('ack');
-    setShowAlert(false);
-    setAlertCall(null);
-    playAckSound();
+
+    if (diffMin >= 3) {
+      // Past 3 min — keep siren running until attended, just play ack beep
+      playAckSound();
+    } else {
+      // Normal ack: stop sounds, show ack state
+      stopAllSounds();
+      setCallBoxState('ack');
+      setShowAlert(false);
+      setAlertCall(null);
+      playAckSound();
+    }
 
     if (currentCall.apiCallId) {
       const bedNoForApi = currentCall.apiBedNo || String(currentCall.apiCallId);
@@ -556,7 +599,7 @@ const NurseCallLanding: React.FC<NurseCallLandingProps> = ({
             {currentCall ? (
               <div className="text-center">
                 <div className={`text-sm font-bold uppercase tracking-widest mb-1 ${textColorClass} opacity-70`}>
-                  {eventLabel[callBoxState]}
+                  {buildDisplayLabel(callBoxState, currentCall.eventType)}
                   {currentCall.callFrom ? ` · ${currentCall.callFrom.toUpperCase()}` : ''}
                 </div>
                 <div className={`text-4xl font-bold mb-2 ${textColorClass}`}>
@@ -588,7 +631,7 @@ const NurseCallLanding: React.FC<NurseCallLandingProps> = ({
                   {call ? (
                     <div className="text-center px-2">
                       <div className={`text-[10px] font-bold uppercase tracking-wider ${txtClr} opacity-70`}>
-                        {eventLabel[state]}
+                        {buildDisplayLabel(state, call.eventType)}
                       </div>
                       <div className={`text-sm font-bold ${txtClr} mb-1`}>
                         {call.floor}{call.wing ? `, ${call.wing}` : ''}
@@ -616,7 +659,7 @@ const NurseCallLanding: React.FC<NurseCallLandingProps> = ({
                   {call ? (
                     <div className="text-center px-2">
                       <div className={`text-[10px] font-bold uppercase tracking-wider ${txtClr} opacity-70`}>
-                        {eventLabel[state]}
+                        {buildDisplayLabel(state, call.eventType)}
                       </div>
                       <div className={`text-sm font-bold ${txtClr} mb-1`}>
                         {call.floor}{call.wing ? `, ${call.wing}` : ''}
