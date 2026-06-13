@@ -324,8 +324,19 @@ const NurseCallLanding: React.FC<NurseCallLandingProps> = ({
     if (!currentCall) {
       stopAllSounds();
       setCallBoxState('idle');
+      setShowAlert(false);
+      setAlertCall(null);
       return;
     }
+
+    if (currentCall.acknowledged) {
+      stopAllSounds();
+      setCallBoxState('ack');
+      setShowAlert(false);
+      setAlertCall(null);
+      return;
+    }
+
     const diffMin = (Date.now() - currentCall.timestamp.getTime()) / 60000;
     if (diffMin >= 3) {
       // Already past 3 min — go straight to siren (even if ack'd)
@@ -338,11 +349,7 @@ const NurseCallLanding: React.FC<NurseCallLandingProps> = ({
       }
       return;
     }
-    if (currentCall.acknowledged) {
-      stopAllSounds();
-      setCallBoxState('ack');
-      return;
-    }
+
     stopAllSounds();
     setCallBoxState(currentCall.eventType);
     stopBeepRef.current = startSoundForEventType(currentCall.eventType);
