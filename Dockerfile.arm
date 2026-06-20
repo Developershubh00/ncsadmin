@@ -11,8 +11,8 @@ COPY . .
 
 # Vite bakes these in at build time. Passed as build args (instead of a .env
 # file in the context) to avoid a BuildKit fsutil bug that rejects ".env".
-ARG VITE_API_BASE_URL=https://ncs.dotdevz.com
-ARG VITE_WS_URL=wss://ncs.dotdevz.com/ws/notifications/
+ARG VITE_API_BASE_URL=http://localhost:8000
+ARG VITE_WS_URL=ws://localhost:8000/ws/notifications/
 ARG VITE_HOSPITAL_ID=4
 ENV VITE_API_BASE_URL=$VITE_API_BASE_URL \
     VITE_WS_URL=$VITE_WS_URL \

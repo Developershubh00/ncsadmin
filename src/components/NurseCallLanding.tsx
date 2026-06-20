@@ -17,7 +17,8 @@ interface Call {
   timestamp: Date;
   acknowledged: boolean;
   apiCallId?: number;
-  apiBedNo?: string;  // bed_no used for acknowledge/attend API calls
+  apiBedNo?: string;  // bed_no used for attend API calls
+  apiFloorNo?: number; // floor_no used for the floor acknowledge API call
   eventType: EventType;
 }
 
@@ -391,6 +392,7 @@ const NurseCallLanding: React.FC<NurseCallLandingProps> = ({
             acknowledged: !!c.acknowledged_at,
             apiCallId: c.id,
             apiBedNo: c.bed_no || c.room_no,
+            apiFloorNo: c.floor_no,
             eventType: resolveEventType(c.call_from),
           }));
         if (mapped.length > 0) {
@@ -425,6 +427,7 @@ const NurseCallLanding: React.FC<NurseCallLandingProps> = ({
           acknowledged: false,
           apiCallId: event.call_id,
           apiBedNo: event.bed_no || event.room_no,
+          apiFloorNo: event.floor_no,
           eventType: resolvedType,
         };
         setCallQueue(prev =>
@@ -493,11 +496,16 @@ const NurseCallLanding: React.FC<NurseCallLandingProps> = ({
     }
 
     if (currentCall.apiCallId) {
-      const bedNoForApi = currentCall.apiBedNo || String(currentCall.apiCallId);
-      try {
-        await callService.acknowledgeCall(bedNoForApi);
-      } catch (err) {
-        console.warn('[ACK] API call failed:', err);
+      // Acknowledge is by floor number, not bed number.
+      const floorNoForApi = currentCall.apiFloorNo;
+      if (floorNoForApi == null) {
+        console.warn('[ACK] No floor number available for call', currentCall.apiCallId);
+      } else {
+        try {
+          await callService.acknowledgeCall(floorNoForApi);
+        } catch (err) {
+          console.warn('[ACK] API call failed:', err);
+        }
       }
     }
   };
