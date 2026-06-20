@@ -114,18 +114,18 @@ const Acknowledge: React.FC = () => {
 
   // ── REST action handlers (unchanged) ───────────────────────────────────────
 
-  const handleAcknowledge = async (callId: number, bedNo: string) => {
+  const handleAcknowledge = async (callId: number, floorNo: number, roomNo: string) => {
     setActionLoading(callId);
     setManualError('');
     try {
-      console.log('🔄 Acknowledging call:', bedNo, '(id:', callId, ')');
-      const result = await callService.acknowledgeCall(bedNo);
+      console.log('🔄 Acknowledging call for floor:', floorNo, '(id:', callId, ')');
+      const result = await callService.acknowledgeCall(floorNo);
       console.log('✅ Call acknowledged successfully');
       // Optimistic update so the row reflects immediately
       processWSEvent({
         event: 'call_acknowledged',
         call_id: callId,
-        room_no: bedNo,
+        room_no: roomNo,
         acknowledged_at: result.acknowledged_at ?? new Date().toISOString(),
       });
       // Then sync store from server
@@ -379,7 +379,7 @@ const Acknowledge: React.FC = () => {
                       <div className="flex space-x-2">
                         {(callStatus === 'new' || !call.acknowledged_at) && !call.attended_at && (
                           <button
-                            onClick={() => handleAcknowledge(call.id, call.bed_no || call.room_no)}
+                            onClick={() => handleAcknowledge(call.id, call.floor_no, call.room_no)}
                             disabled={actionLoading === call.id}
                             className="inline-flex items-center px-3 py-1 bg-yellow-500 text-white text-xs rounded-md hover:bg-yellow-600 disabled:opacity-50 transition-colors"
                           >

@@ -18,12 +18,19 @@ export async function createCall(data: CallCreateRequest): Promise<CallRecord> {
 }
 
 /**
- * Acknowledge a call
- * POST /api/call/acknowledge/<bed_no>/
+ * Acknowledge a call by floor number
+ * POST /api/calls/floor/acknowledge/
  */
-export async function acknowledgeCall(bedNo: string): Promise<CallAckResponse> {
-    return apiRequest<CallAckResponse>(`/api/call/acknowledge/${bedNo}/`, {
+export async function acknowledgeCall(floorNo: number | string): Promise<CallAckResponse> {
+    const parsedFloor = typeof floorNo === 'number' ? floorNo : Number(floorNo);
+
+    if (!Number.isFinite(parsedFloor)) {
+        throw new Error('A valid floor number is required for acknowledgement.');
+    }
+
+    return apiRequest<CallAckResponse>('/api/calls/floor/acknowledge/', {
         method: 'POST',
+        body: JSON.stringify({ floor_no: parsedFloor }),
     });
 }
 

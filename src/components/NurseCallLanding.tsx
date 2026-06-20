@@ -69,7 +69,7 @@ function playTone(
   } catch (_) { /* ignore */ }
 }
 
-/** Nurse Call — soft quiet beep-beep (Normal) */
+/** Nurse Call — soft quick beep-beep (Normal) */
 function startNurseCallBeep(): () => void {
   let stopped = false;
   let t: ReturnType<typeof setTimeout>;
@@ -77,7 +77,7 @@ function startNurseCallBeep(): () => void {
     if (stopped) return;
     playTone(660, 0.08, 'sine', 0.06, 0);
     playTone(660, 0.08, 'sine', 0.06, 0.18);
-    t = setTimeout(beep, 1800);
+    t = setTimeout(beep, 1200);
   };
   beep();
   return () => { stopped = true; clearTimeout(t); };
